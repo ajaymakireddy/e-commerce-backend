@@ -21,9 +21,16 @@ const OTP_EXPIRY_MINUTES = 5;
 async function sendOTPEmail(email, otp) {
   try {
     const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: process.env.EMAIL, pass: process.env.EMAIL_PASSWORD }
-    });
+  //host: "smtp.gmail.com",
+  //port: 465,
+  //secure: true, // SSL
+  service : "gmail",
+  auth: {
+    user: process.env.EMAIL,
+    pass: process.env.EMAIL_PASSWORD,
+  },
+  });
+
 
     const options = {
       from: `"E-Commerce" <${process.env.EMAIL}>`,
@@ -60,6 +67,10 @@ const signup = async (req, res) => {
 
     const otp = otpGenerator.generate(6, { upperCaseAlphabets: false, specialChars: false });
     const expiresAt = moment().add(OTP_EXPIRY_MINUTES, 'minutes').toDate();
+    
+    console.log("EMAIL:", process.env.EMAIL);
+   console.log("EMAIL_PASSWORD length:", process.env.EMAIL_PASSWORD?.length);
+
 
     await OTP.create({ email, otp, expiresAt, purpose: 'Signup' });
 
