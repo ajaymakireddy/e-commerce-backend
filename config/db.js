@@ -1,6 +1,14 @@
 import { Sequelize } from "sequelize";
 import dotenv from "dotenv";
+import chalk from "chalk";
+
 dotenv.config();
+
+// Track current route for SQL logging
+let currentRoute = "";
+export function setCurrentRoute(route) {
+  currentRoute = route;
+}
 
 // Create Sequelize instance
 export const sequelize = new Sequelize(
@@ -11,7 +19,10 @@ export const sequelize = new Sequelize(
     host: process.env.DB_HOST,
     port: process.env.DB_PORT,
     dialect: "postgres",
-    logging: true,        // disable SQL logs in console
+    logging: (msg) => {
+      const prefix = currentRoute ? chalk.yellow(`[${currentRoute}]`) : "";
+      console.log(prefix, chalk.cyanBright("[SQL]"), chalk.gray(msg));
+    },
   }
 );
 
@@ -19,8 +30,8 @@ export const sequelize = new Sequelize(
 export async function testConnection() {
   try {
     await sequelize.authenticate();
-    console.log("✅ Database connection has been established successfully.");
+    console.log(chalk.green("✅ Database connection has been established successfully."));
   } catch (error) {
-    console.error("❌ Unable to connect to the database:", error.message);
+    console.error(chalk.red("❌ Unable to connect to the database:"), error.message);
   }
 }

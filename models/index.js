@@ -1,23 +1,12 @@
+"use strict";
+
 const fs = require("fs");
 const path = require("path");
-const { Sequelize } = require("sequelize");
-require("dotenv").config();
-
 const basename = path.basename(__filename);
 const db = {};
 
-// ✅ Initialize Sequelize
-const sequelize = new Sequelize(
-  process.env.DB_NAME,
-  process.env.DB_USER,
-  process.env.DB_PASS,
-  {
-    host: process.env.DB_HOST || "127.0.0.1",
-    port: process.env.DB_PORT || 5432,
-    dialect: process.env.DB_DIALECT || "postgres",
-    logging: false,
-  }
-);
+// ✅ Import the already configured Sequelize instance from db.js
+const { sequelize } = require("../config/db.js"); // <-- Important line
 
 // ✅ Dynamically import all models in this folder
 fs.readdirSync(__dirname)
@@ -39,8 +28,8 @@ Object.keys(db).forEach((modelName) => {
   }
 });
 
-// ✅ Export Sequelize connection and models
+// ✅ Export models and the shared Sequelize connection
 db.sequelize = sequelize;
-db.Sequelize = Sequelize;
+db.Sequelize = require("sequelize");
 
 module.exports = db;

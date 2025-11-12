@@ -7,6 +7,9 @@ const verify_jwt = require("../middleware/verifyJwt");
 router.post("/signup", authController.signup);
 router.post("/verify", authController.verify_otp);
 
+router.post("/refresh", authController.refreshAccessToken);
+
+
 // Login
 router.post("/login", authController.login);
 

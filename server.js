@@ -7,7 +7,7 @@ const session = require("express-session");
 const crypto = require("crypto");
 const rateLimit = require("express-rate-limit");
 const router = require("./routes");
-const { sequelize, testConnection } = require("./config/db");
+const { sequelize, testConnection, setCurrentRoute } = require("./config/db");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -24,8 +24,8 @@ app.use(session({
   cookie: {
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24
-  }
+    maxAge: 1000 * 60 * 60 * 24,
+  },
 }));
 
 // Generate per-request nonce (security)
@@ -38,9 +38,17 @@ app.use((req, res, next) => {
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
-  message: "Too many requests, please try again later."
+  message: "Too many requests, please try again later.",
 });
 app.use(limiter);
+
+// 👇 NEW Middleware: Label SQL logs with current route
+app.use((req, res, next) => {
+  const method = req.method.toUpperCase();
+  const path = req.originalUrl.split("?")[0];
+  setCurrentRoute(`${method} ${path}`);
+  next();
+});
 
 // Default route
 app.get("/", (req, res) => {
