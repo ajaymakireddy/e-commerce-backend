@@ -9,14 +9,20 @@ const rateLimit = require("express-rate-limit");
 const router = require("./routes");
 const { sequelize, testConnection, setCurrentRoute } = require("./config/db");
 
+//from client express recieves the request here
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+//Then this is the 1st place every request comes here
 // Middleware setup
 app.use(cors());
+//This line will read every request body
 app.use(express.json());
+// This line prints the status of the request
 app.use(morgan("dev"));
+// Adds security to the header part
 app.use(helmet());
+//Adds session cookies
 app.use(session({
   secret: process.env.SESSION_SECRET || "my$eCreTKeY",
   resave: false,
@@ -28,12 +34,16 @@ app.use(session({
   },
 }));
 
+
+
 // Generate per-request nonce (security)
 app.use((req, res, next) => {
   res.locals.nonce = crypto.randomBytes(16).toString("base64");
   next();
 });
 
+
+//It prevents a user from hitting the server too many times in a short time. If limit is crossed → request is blocked
 // Rate limiter
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -42,6 +52,8 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
+
+//This will show which API triggered which SQL query 
 // 👇 NEW Middleware: Label SQL logs with current route
 app.use((req, res, next) => {
   const method = req.method.toUpperCase();
@@ -50,11 +62,13 @@ app.use((req, res, next) => {
   next();
 });
 
+//Testing purpose written this API
 // Default route
 app.get("/", (req, res) => {
   res.send("✅ E-Commerce Authentication API is Running!");
 });
 
+//This is the main point which sends the request to routes(index.js)
 // Mount routes
 app.use("/", router);
 

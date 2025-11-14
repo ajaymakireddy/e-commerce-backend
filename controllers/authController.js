@@ -49,43 +49,66 @@ async function sendOTPEmail(email, otp) {
 
 const signup = async (req, res) => {
   try {
-    const { email } = req.body;
+    const { name, email, mobile, password } = req.body;
 
-    if (!email) {
-      return res.status(400).json({ message: "Email is required." });
+    // Validate input
+    if (!name || !email || !mobile || !password) {
+      return res.status(400).json({
+        message: "Name, email, mobile and password are required."
+      });
     }
 
-    // Check if user already exists
+    // Check existing user
     let user = await User.findOne({ where: { email } });
 
-    // If not, create new user
+    // If exists and verified
+    if (user && user.isVerified) {
+      return res.status(400).json({
+        message: "User already exists. Please login."
+      });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // If user does not exist → create new
     if (!user) {
       user = await User.create({
-        name: "User_" + Math.floor(Math.random() * 10000), // ✅ optional
+        name,
         email,
-        isVerified: false,
+        mobile,
+        password: hashedPassword,
+        isVerified: false
+      });
+    } else {
+      // If user exists but not verified → update details
+      await user.update({
+        name,
+        mobile,
+        password: hashedPassword,
+        isVerified: false
       });
     }
 
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min expiry
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
-    // Save or update OTP
     await OTP.upsert({
       email,
       otp,
       purpose: "Signup",
-      expiresAt,
+      expiresAt
     });
 
-    // ✅ Send email using correct helper
+    // Send OTP
     await sendOTPEmail(email, otp);
 
     return res.status(200).json({
       message: "OTP sent successfully to your email.",
-      email,
+      email
     });
+
   } catch (error) {
     console.error("Signup Error:", error);
     return res.status(500).json({ message: "Internal Server Error" });
@@ -104,66 +127,80 @@ const verify_otp = async (req, res) => {
       return res.status(400).json({ message: "Email and OTP are required." });
     }
 
-    // Check OTP validity
+    // 🔍 Check OTP validity
     const otpRecord = await OTP.findOne({
       where: {
         email,
         otp,
         purpose: "Signup",
-        expiresAt: { [Op.gt]: new Date() }, // ensure not expired
-      },
+        expiresAt: { [Op.gt]: new Date() } // not expired
+      }
     });
 
     if (!otpRecord) {
       return res.status(400).json({ message: "Invalid or expired OTP." });
     }
 
-    // Find user by email
+    // 🔍 Fetch user
     const user = await User.findOne({ where: { email } });
     if (!user) {
       return res.status(404).json({ message: "User not found." });
     }
 
-    // Mark user as verified
+    // 🔐 Mark user as verified
     await user.update({ isVerified: true });
 
-    // Delete OTP
+    // 🗑 Delete OTP record after success
     await OTP.destroy({ where: { email } });
 
-    // ✅ Generate Access & Refresh Tokens
+    // ==========================
+    //   🔥 Generate JWT Tokens
+    // ==========================
+
     const accessToken = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
+      { 
+        id: user.id, 
+        email: user.email, 
+        role: user.role 
+      },
       process.env.JWT_SECRET,
-      { expiresIn: "1h" } // 1 hour validity
+      { expiresIn: "1h" } // 1 hour token
     );
 
     const refreshToken = jwt.sign(
-      { id: user.id, email: user.email },
+      { 
+        id: user.id, 
+        email: user.email 
+      },
       process.env.JWT_REFRESH_SECRET,
-      { expiresIn: "7d" } // 7 days validity
+      { expiresIn: "7d" } // 7 days
     );
 
-    // ✅ Save refresh token in DB
+    // 💾 Save refresh token to DB
     await user.update({ refreshToken });
 
+    // ✅ Return success response
     return res.status(200).json({
-      message: "OTP verified successfully. Account activated.",
+      message: "OTP verified successfully. Your account has been activated.",
       user: {
         id: user.id,
+        name: user.name,
         email: user.email,
-        isVerified: user.isVerified,
+        mobile: user.mobile,
+        role: user.role,
+        isVerified: true
       },
       tokens: {
         accessToken,
-        refreshToken,
-      },
+        refreshToken
+      } 
     });
+
   } catch (error) {
     console.error("Verify OTP Error:", error);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
-
 
 /* ============================================================
    3.  Refresh Access Token- When the access token expires, the frontend sends the refresh token to this endpoint (/auth/refresh) to get a new access token automatically

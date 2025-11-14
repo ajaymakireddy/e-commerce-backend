@@ -1,9 +1,7 @@
 module.exports = (req, res, next) => {
   try {
     const allowedSuperAdmins = [
-      "founder@kernn.ai",
-      "saisaraswathi@kernn.ai",
-      "admin@yourdomain.com",
+      "kourwarsaisaraswathi@gmailcom", 
     ];
 
     if (!req.user || !allowedSuperAdmins.includes(req.user.email)) {
