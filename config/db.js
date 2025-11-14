@@ -21,7 +21,14 @@ export const sequelize = new Sequelize(
     dialect: "postgres",
     logging: (msg) => {
       const prefix = currentRoute ? chalk.yellow(`[${currentRoute}]`) : "";
-      console.log(prefix, chalk.cyanBright("[SQL]"), chalk.gray(msg));
+      console.log(prefix, chalk.cyanBright("[SQL]"), chalk.gray(msg)); 
+    },
+    
+    dialectOptions: {
+      ssl: {
+        require: true,
+        rejectUnauthorized: false, // for AWS self-signed certs
+      },
     },
   }
 );
