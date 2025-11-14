@@ -51,10 +51,10 @@ const signup = async (req, res) => {
   try {
     const { name, email, mobile, password } = req.body;
 
-    // Validate input
-    if (!name || !email || !mobile || !password) {
+    // Validate required fields
+    if (!name || !email || !password) {
       return res.status(400).json({
-        message: "Name, email, mobile and password are required."
+        message: "Name, email, and password are required. Mobile is optional."
       });
     }
 
@@ -76,7 +76,7 @@ const signup = async (req, res) => {
       user = await User.create({
         name,
         email,
-        mobile,
+        mobile: mobile || null,      // <-- optional mobile
         password: hashedPassword,
         isVerified: false
       });
@@ -84,7 +84,7 @@ const signup = async (req, res) => {
       // If user exists but not verified → update details
       await user.update({
         name,
-        mobile,
+        mobile: mobile || null,       // <-- optional mobile
         password: hashedPassword,
         isVerified: false
       });
