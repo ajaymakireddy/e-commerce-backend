@@ -1,18 +1,13 @@
 const db = require('../models');
 const otpGenerator = require('otp-generator');
 const nodemailer = require('nodemailer');
-const moment = require('moment');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const moment = require('moment');
 const { Op } = require('sequelize');
 
-// Import Models
-const { User, OTP } = db;
-
-
-// OTP valid for 15 minutes
-const OTP_EXPIRY_MINUTES = 15;
-
+// FIX IMPORTS
+const { User, OTP, Role, UserRole, RoleScope, Scope } = db;
 
 
 /* ============================================================
@@ -21,96 +16,106 @@ const OTP_EXPIRY_MINUTES = 15;
 async function sendOTPEmail(email, otp) {
   try {
     const transporter = nodemailer.createTransport({
-  service : "gmail",
-  auth: {
-    user: process.env.EMAIL,
-    pass: process.env.EMAIL_PASSWORD,
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL,
+        pass: process.env.EMAIL_PASSWORD,
       },
     });
 
-    const options = {
+    await transporter.sendMail({
       from: `"E-Commerce" <${process.env.EMAIL}>`,
       to: email,
-      subject: 'Your OTP Code',
-      html: `<p>Your OTP is <b>${otp}</b>. It expires in 15 minutes.</p>`
-    };
+      subject: "Your OTP Code",
+      html: `<p>Your OTP is <b>${otp}</b>. It expires in 15 minutes.</p>`,
+    });
 
-    await transporter.sendMail(options);
     console.log(`OTP sent to ${email}`);
   } catch (error) {
-    console.error('Email sending failed:', error);
+    console.error("Email sending failed:", error);
   }
 }
 
-
 /* ============================================================
-   1️. Generate OTP for Signup
+   1. Generate OTP for Signup
 ============================================================ */
-
 const signup = async (req, res) => {
   try {
     const { name, email, mobile, password } = req.body;
 
-    // Validate required fields
     if (!name || !email || !password) {
       return res.status(400).json({
-        message: "Name, email, and password are required. Mobile is optional."
+        message: "Name, email, and password are required. Mobile is optional.",
       });
     }
 
-    // Check existing user
+    // Check only by email (PRIMARY IDENTIFIER)
     let user = await User.findOne({ where: { email } });
 
-    // If exists and verified
+    // If verified email exists → stop
     if (user && user.isVerified) {
       return res.status(400).json({
-        message: "User already exists. Please login."
+        message: "Email already registered. Please login.",
       });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // If user does not exist → create new
-    if (!user) {
+    // Case A: User exists by email but not verified → update
+    if (user) {
+      await user.update({
+        name,
+        mobile: mobile || null,
+        password: hashedPassword,
+        isVerified: false,
+      });
+    }
+
+    // Case B: User does NOT exist → create new
+    else {
       user = await User.create({
         name,
         email,
-        mobile: mobile || null,      // <-- optional mobile
+        mobile: mobile || null,  // mobile optional & no unique validation
         password: hashedPassword,
-        isVerified: false
-      });
-    } else {
-      // If user exists but not verified → update details
-      await user.update({
-        name,
-        mobile: mobile || null,       // <-- optional mobile
-        password: hashedPassword,
-        isVerified: false
+        isVerified: false,
       });
     }
+
+    // Assign default CUSTOMER role
+    const assignedRoles = await user.getRoles();
+    if (assignedRoles.length === 0) {
+      const customerRole = await Role.findOne({ where: { name: "customer" } });
+      await user.addRole(customerRole);
+    }
+
+    // Delete old OTPs
+    await OTP.destroy({ where: { email, purpose: "Signup" } });
 
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
-    await OTP.upsert({
+    await OTP.create({
       email,
       otp,
       purpose: "Signup",
-      expiresAt
+      expiresAt,
+      verified: false,
     });
 
-    // Send OTP
+    // Send OTP email
     await sendOTPEmail(email, otp);
+
+    console.log(`OTP sent to ${email}. OTP: ${otp}`);
 
     return res.status(200).json({
       message: "OTP sent successfully to your email.",
-      email
+      email,
     });
 
-  } catch (error) {
-    console.error("Signup Error:", error);
+  } catch (err) {
+    console.error("Signup Error:", err);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
@@ -127,13 +132,14 @@ const verify_otp = async (req, res) => {
       return res.status(400).json({ message: "Email and OTP are required." });
     }
 
-    // 🔍 Check OTP validity
+    // Find OTP
     const otpRecord = await OTP.findOne({
       where: {
         email,
         otp,
         purpose: "Signup",
-        expiresAt: { [Op.gt]: new Date() } // not expired
+        verified: false,
+        expiresAt: { [Op.gt]: new Date() }
       }
     });
 
@@ -141,66 +147,86 @@ const verify_otp = async (req, res) => {
       return res.status(400).json({ message: "Invalid or expired OTP." });
     }
 
-    // 🔍 Fetch user
+    // Fetch user
     const user = await User.findOne({ where: { email } });
     if (!user) {
       return res.status(404).json({ message: "User not found." });
     }
 
-    // 🔐 Mark user as verified
+    // Mark OTP as verified
+    await otpRecord.update({ verified: true });
+
+    // Mark user as verified
     await user.update({ isVerified: true });
 
-    // 🗑 Delete OTP record after success
-    await OTP.destroy({ where: { email } });
+    // Get roles with scopes
+    const userWithRoles = await User.findByPk(user.id, {
+      include: [
+        {
+          model: Role,
+          as: "roles",
+          attributes: ["id", "name"],
+          include: [
+            {
+              model: RoleScope,
+              as: "scopes",
+              include: [{ model: Scope, as: "scope" }]
+            }
+          ]
+        }
+      ]
+    });
 
-    // ==========================
-    //   🔥 Generate JWT Tokens
-    // ==========================
+    // Prepare simplified scopes
+    const allowedScopes = [];
+    userWithRoles.roles.forEach(role => {
+      role.scopes.forEach(rs => {
+        allowedScopes.push(rs.scope.name);
+      });
+    });
 
+    // Generate tokens  
     const accessToken = jwt.sign(
-      { 
-        id: user.id, 
-        email: user.email, 
-        role: user.role 
+      {
+        id: user.id,
+        email: user.email,
+        roles: userWithRoles.roles.map(r => r.name),
+        scopes: allowedScopes
       },
       process.env.JWT_SECRET,
-      { expiresIn: "1h" } // 1 hour token
+      { expiresIn: "1h" }
     );
 
     const refreshToken = jwt.sign(
-      { 
-        id: user.id, 
-        email: user.email 
-      },
+      { id: user.id, email: user.email },
       process.env.JWT_REFRESH_SECRET,
-      { expiresIn: "7d" } // 7 days
+      { expiresIn: "7d" }
     );
 
-    // 💾 Save refresh token to DB
+    // Save refresh token
     await user.update({ refreshToken });
 
-    // ✅ Return success response
     return res.status(200).json({
-      message: "OTP verified successfully. Your account has been activated.",
+      message: "OTP verified successfully.",
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
         mobile: user.mobile,
-        role: user.role,
+        roles: userWithRoles.roles.map(r => r.name),
+        scopes: allowedScopes,
         isVerified: true
       },
-      tokens: {
-        accessToken,
-        refreshToken
-      } 
+      tokens: { accessToken, refreshToken }
     });
 
-  } catch (error) {
-    console.error("Verify OTP Error:", error);
+  } catch (err) {
+    console.error("Verify OTP Error:", err);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
+
+
 
 /* ============================================================
    3.  Refresh Access Token- When the access token expires, the frontend sends the refresh token to this endpoint (/auth/refresh) to get a new access token automatically
@@ -409,6 +435,122 @@ const resetPassword = async (req, res) => {
 };
 
 
+/* ============================================================
+   Create Admin (ONLY SuperAdmin can do this)
+============================================================ */
+const createAdmin = async (req, res) => {
+  try {
+    const { name, email, password, mobile } = req.body;
+
+    // Required fields
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        message: "Name, email, and password are required.",
+      });
+    }
+
+    // Check email exists
+    const existingUser = await User.findOne({ where: { email } });
+    if (existingUser) {
+      return res.status(400).json({
+        message: "Email already exists.",
+      });
+    }
+
+    // Encrypt password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create admin user
+    const newAdmin = await User.create({
+      name,
+      email,
+      mobile: mobile || null,
+      password: hashedPassword,
+      isVerified: true,   // Admin doesn't need OTP
+      role: "admin",
+    });
+
+    // Assign admin role in Role table
+    const adminRole = await Role.findOne({ where: { name: "admin" } });
+
+    if (adminRole) {
+      await UserRole.create({
+        userId: newAdmin.id,
+        roleId: adminRole.id,
+      });
+    }
+
+    return res.status(201).json({
+      message: "Admin created successfully.",
+      admin: {
+        id: newAdmin.id,
+        name: newAdmin.name,
+        email: newAdmin.email,
+        mobile: newAdmin.mobile,
+        role: "admin",
+      },
+    });
+
+  } catch (error) {
+    console.error("Create Admin Error:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+
+/* ============================================================
+   Update Role (Admin <-> Customer)
+============================================================ */
+const updateRole = async (req, res) => {
+  try {
+    const { userId } = req.params;  // user ID to update
+    const { newRole } = req.body;   // "admin" or "customer"
+
+    if (!newRole || !["admin", "customer"].includes(newRole)) {
+      return res.status(400).json({ message: "Invalid role. Use 'admin' or 'customer'." });
+    }
+
+    // Find user
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // Fetch roles from DB
+    const adminRole = await Role.findOne({ where: { name: "admin" } });
+    const customerRole = await Role.findOne({ where: { name: "customer" } });
+
+    if (!adminRole || !customerRole) {
+      return res.status(500).json({ message: "Role definitions missing in DB." });
+    }
+
+    // Remove all old roles from UserRole table
+    await UserRole.destroy({ where: { userId: user.id } });
+
+    // Assign new role mapping
+    const selectedRole = newRole === "admin" ? adminRole : customerRole;
+    await UserRole.create({ userId: user.id, roleId: selectedRole.id });
+
+    // Update role field in User table to sync enums
+    await user.update({ role: newRole });
+
+    return res.status(200).json({
+      message: `Role updated to ${newRole} successfully.`,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: newRole,
+      },
+    });
+
+  } catch (error) {
+    console.error("Update Role Error:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+
 
 /* ============================================================
    Export Controller Functions
@@ -419,5 +561,7 @@ module.exports = {
   login,
   forgotPassword,
   resetPassword,
-  refreshAccessToken
+  refreshAccessToken,
+  createAdmin,
+  updateRole
 };

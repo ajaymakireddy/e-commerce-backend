@@ -33,7 +33,7 @@ module.exports = (sequelize) => {
       },
       mobile: {
         type: DataTypes.STRING(15),
-        unique: true,
+        unique: false,
         allowNull: true, // optional for email-only users
         validate: {
           is: /^[0-9]{10,15}$/i, // optional validation pattern

@@ -9,9 +9,14 @@ const rateLimit = require("express-rate-limit");
 const router = require("./routes");
 const { sequelize, testConnection, setCurrentRoute } = require("./config/db");
 
-//from client express recieves the request here
+
+//from client express receives the request here
 const app = express();
 const PORT = process.env.PORT || 4000;
+
+// FIX FOR RATE-LIMIT ERROR
+app.set("trust proxy", 1);   // <--- ADD THIS LINE
+
 
 //Then this is the 1st place every request comes here
 // Middleware setup
@@ -76,7 +81,7 @@ app.use("/", router);
 (async () => {
   try {
     await testConnection();
-    await sequelize.sync({ alter: true });
+    await sequelize.sync();
     app.listen(PORT, () =>
       console.log(`🚀 Server running on http://localhost:${PORT}`)
     );
